@@ -5,9 +5,9 @@
 
 using namespace sl;
 
-float COLOR_THRESHHOLD = 50;
+float DISTANCE_DIFFERENCE_THRESHHOLD = 300;
 int AREA_THRESHHOLD = 400;
-float SAFE_DISTANCE = 150;
+float SAFE_DISTANCE = 2000;
 
 void find_objects(cv::Mat source, cv::Mat view);
 cv::Mat slMat2cvMat(Mat& input);
@@ -26,7 +26,7 @@ void main_zed()
     // Set configuration parameters
     InitParameters init_params;
     init_params.camera_resolution = RESOLUTION_HD720;
-    init_params.camera_fps = 5;
+    init_params.camera_fps = 10;
 
     // Open the camera
     ERROR_CODE err = zed.open(init_params);
@@ -62,12 +62,14 @@ void main_zed()
 
 void find_objects(cv::Mat source, cv::Mat view)
 {
+    // Resize image
     cv::resize(source, source, cv::Size(160, 90));
     cv::resize(view, view, cv::Size(160, 90));
 
-    source.setTo(0, source != source);
-    source.setTo(0, source == std::numeric_limits<float>::infinity());
-    source.setTo(0, source == -std::numeric_limits<float>::infinity());
+    // Deal with special values
+    source.setTo(SAFE_DISTANCE*10, source != source);
+    source.setTo(SAFE_DISTANCE*10, source == std::numeric_limits<float>::infinity());
+    source.setTo(SAFE_DISTANCE*10, source == -std::numeric_limits<float>::infinity());
 
     cv::imshow("original", view);
 
@@ -75,39 +77,35 @@ void find_objects(cv::Mat source, cv::Mat view)
         height = source.size().height;
     cv::Mat filled(height + 2,
                    width + 2,
-                   CV_8UC1, cv::Scalar(0));
+                   CV_8UC1, cv::Scalar(0)); // Mask of area filled
     cv::Mat filling(height + 2,
                     width + 2,
-                    CV_8UC1, cv::Scalar(0));
+                    CV_8UC1, cv::Scalar(0)); // Mask of area filled including the area in this iteration
     cv::Mat difference(height + 2,
                        width + 2,
-                       CV_8UC1, cv::Scalar(0));
+                       CV_8UC1, cv::Scalar(0)); // Mask of new area
     cv::Mat invert_difference(height + 2,
                               width + 2,
-                              CV_8UC1, cv::Scalar(0));
-    cv::Mat result;
+                              CV_8UC1, cv::Scalar(0)); // Mask of unchanged area
+    cv::Mat result; // Image for result
     view.copyTo(result);
     
     cv::Scalar boundary_color(255, 0, 0);
 
-    int segment_count = 1;
     for (int x = 0; x < width; x++)
         for (int y = 0; y < height; y++)
         {
-            // std::cout << x << " " << y << std::endl;
-
             cv::Point point_in_seg(x + 1, y + 1),
                       point_in_source(x, y);
-            float distance_at_point = source.at<float>(point_in_source);
             if (filling.at<unsigned char>(point_in_seg) == 0)
             {
-                cv::floodFill(view, // image
+                cv::floodFill(source, // image
                               filling, // mask
                               point_in_source, // seed point
                               cv::Scalar(0), // newVal
                               NULL, // rect
-                              cv::Scalar(COLOR_THRESHHOLD, COLOR_THRESHHOLD, COLOR_THRESHHOLD), // loDiff
-                              cv::Scalar(COLOR_THRESHHOLD, COLOR_THRESHHOLD, COLOR_THRESHHOLD), // upDiff
+                              cv::Scalar(DISTANCE_DIFFERENCE_THRESHHOLD), // loDiff
+                              cv::Scalar(DISTANCE_DIFFERENCE_THRESHHOLD), // upDiff
                               4 | ((1) << 8) | cv::FLOODFILL_MASK_ONLY | cv::FLOODFILL_FIXED_RANGE); // flags
                 cv::bitwise_xor(filling, filled, difference);
                 invert_difference = cv::Mat::ones(difference.size(), difference.type()) - difference;
@@ -118,9 +116,8 @@ void find_objects(cv::Mat source, cv::Mat view)
 
                 if (area_size > AREA_THRESHHOLD)
                 {
-                    double color = cv::mean(view, difference)[0];
                     double distance = cv::mean(source, difference)[0];
-                    if (color > SAFE_DISTANCE)
+                    if (distance < SAFE_DISTANCE)
                     {
                         char text[255];
                         cv::Rect boundary = cv::boundingRect(difference);
@@ -130,15 +127,13 @@ void find_objects(cv::Mat source, cv::Mat view)
                         cv::putText(result, text, cv::Point(boundary.x, boundary.y+30), cv::FONT_HERSHEY_SCRIPT_SIMPLEX, 0.5, boundary_color);
                     }
                 }
-
-                segment_count++;
             }
         }
     std::cout << "show image" << std::endl;
 
 
     cv::imshow("result", result);
-    if (cv::waitKey(200) == 0) exit(0);
+    if (cv::waitKey(70) == 0) exit(0);
 }
 
 cv::Mat slMat2cvMat(Mat& input) {
