@@ -5,11 +5,11 @@
 
 using namespace sl;
 
-int COLOR_THRESHHOLD = 50;
-int AREA_THRESHHOLD = 1600;
-int SAFE_DISTANCE = 150;
+float COLOR_THRESHHOLD = 50;
+int AREA_THRESHHOLD = 400;
+float SAFE_DISTANCE = 150;
 
-void find_objects(cv::Mat source);
+void find_objects(cv::Mat source, cv::Mat view);
 cv::Mat slMat2cvMat(Mat& input);
 void main_zed();
 
@@ -25,28 +25,34 @@ void main_zed()
 
     // Set configuration parameters
     InitParameters init_params;
-    init_params.camera_resolution = RESOLUTION_HD1080; // Use HD1080 video mode
-    init_params.camera_fps = 10; // Set fps at 30
+    init_params.camera_resolution = RESOLUTION_HD720;
+    init_params.camera_fps = 5;
 
     // Open the camera
     ERROR_CODE err = zed.open(init_params);
     if (err != SUCCESS)
+    {
+        std::cout << "Can't open the camera!" << std::endl;
         exit(-1);
+    }
 
-	sl::Mat depth_zed(zed.getResolution(), MAT_TYPE_8U_C4);
-	cv::Mat depth_ocv= slMat2cvMat(depth_zed);
-    cv::Mat converted_depth;
+	sl::Mat depth_zed(zed.getResolution(), MAT_TYPE_32F_C1);
+	cv::Mat depth_ocv = slMat2cvMat(depth_zed);
+
+	sl::Mat depth_view_zed(zed.getResolution(), MAT_TYPE_8U_C4);
+	cv::Mat depth_view_ocv = slMat2cvMat(depth_view_zed);
+
+	cv::Mat depth_view_converted;
 
 	while (true) {
         // Grab an image
         if (zed.grab() == SUCCESS) {
+			zed.retrieveMeasure(depth_zed, MEASURE_DEPTH);
+            zed.retrieveImage(depth_view_zed, VIEW_DEPTH);
             std::cout << "Got image" << std::endl;
-			zed.retrieveImage(depth_zed, VIEW_DEPTH);
-			// zed.retrieveMeasure(depth_zed, MEASURE_DEPTH);
-            cvtColor(depth_ocv, converted_depth, CV_BGRA2BGR);
-            find_objects(converted_depth);
-            // cv::imshow("1",depth_ocv);
-            // cv::waitKey(27);
+
+            cv::cvtColor(depth_view_ocv, depth_view_converted, CV_BGRA2BGR);
+            find_objects(depth_ocv, depth_view_converted);
         }
     }
 
@@ -54,9 +60,17 @@ void main_zed()
     zed.close();
 }
 
-void find_objects(cv::Mat source)
+void find_objects(cv::Mat source, cv::Mat view)
 {
-    cv::resize(source, source, cv::Size(160*4, 90*4));
+    cv::resize(source, source, cv::Size(160, 90));
+    cv::resize(view, view, cv::Size(160, 90));
+
+    source.setTo(0, source != source);
+    source.setTo(0, source == std::numeric_limits<float>::infinity());
+    source.setTo(0, source == -std::numeric_limits<float>::infinity());
+
+    cv::imshow("original", view);
+
     int width = source.size().width,
         height = source.size().height;
     cv::Mat filled(height + 2,
@@ -72,7 +86,7 @@ void find_objects(cv::Mat source)
                               width + 2,
                               CV_8UC1, cv::Scalar(0));
     cv::Mat result;
-    source.copyTo(result);
+    view.copyTo(result);
     
     cv::Scalar boundary_color(255, 0, 0);
 
@@ -80,11 +94,14 @@ void find_objects(cv::Mat source)
     for (int x = 0; x < width; x++)
         for (int y = 0; y < height; y++)
         {
+            // std::cout << x << " " << y << std::endl;
+
             cv::Point point_in_seg(x + 1, y + 1),
                       point_in_source(x, y);
+            float distance_at_point = source.at<float>(point_in_source);
             if (filling.at<unsigned char>(point_in_seg) == 0)
             {
-                cv::floodFill(source, // image
+                cv::floodFill(view, // image
                               filling, // mask
                               point_in_source, // seed point
                               cv::Scalar(0), // newVal
@@ -101,13 +118,14 @@ void find_objects(cv::Mat source)
 
                 if (area_size > AREA_THRESHHOLD)
                 {
+                    double color = cv::mean(view, difference)[0];
                     double distance = cv::mean(source, difference)[0];
-                    if (distance > SAFE_DISTANCE)
+                    if (color > SAFE_DISTANCE)
                     {
                         char text[255];
                         cv::Rect boundary = cv::boundingRect(difference);
 
-                        sprintf(text, "%.1f", distance);
+                        sprintf(text, "%.0f", distance);
                         cv::rectangle(result, boundary, boundary_color, 1);
                         cv::putText(result, text, cv::Point(boundary.x, boundary.y+30), cv::FONT_HERSHEY_SCRIPT_SIMPLEX, 0.5, boundary_color);
                     }
@@ -118,8 +136,9 @@ void find_objects(cv::Mat source)
         }
     std::cout << "show image" << std::endl;
 
-    cv::imshow("segmentation", result);
-    cv::waitKey(27);
+
+    cv::imshow("result", result);
+    if (cv::waitKey(200) == 0) exit(0);
 }
 
 cv::Mat slMat2cvMat(Mat& input) {
