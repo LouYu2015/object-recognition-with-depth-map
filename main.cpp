@@ -5,11 +5,16 @@
 
 using namespace sl;
 
-float DISTANCE_DIFFERENCE_THRESHHOLD = 300;
-int AREA_THRESHHOLD = 400;
-float SAFE_DISTANCE = 2000;
+struct Obj_Info { // Information of detected object
+    double distance; // Average distance measured by ZED camera
+    cv::Rect boundary; // Rectangle boundary of the object(measured in resized image)
+};
 
-void find_objects(cv::Mat source, cv::Mat view);
+const float DISTANCE_DIFFERENCE_THRESHHOLD = 300; // The distance difference tolerance of a single object
+const int AREA_THRESHHOLD = 400; // Minimum number of pixel that can be consider as an object(measued in resized image)
+const float SAFE_DISTANCE = 2000; // Maximum distance that will be reported
+
+std::vector<Obj_Info> find_objects(cv::Mat source, cv::Mat view);
 cv::Mat slMat2cvMat(Mat& input);
 void main_zed();
 
@@ -52,7 +57,14 @@ void main_zed()
             std::cout << "Got image" << std::endl;
 
             cv::cvtColor(depth_view_ocv, depth_view_converted, CV_BGRA2BGR);
-            find_objects(depth_ocv, depth_view_converted);
+            std::vector<Obj_Info> result = find_objects(depth_ocv, depth_view_converted);
+
+            for (int i = 0; i < result.size(); i++)
+            {
+                std::cout << "Position: (" << result[i].boundary.x << ", " << result[i].boundary.y << ")"<< std::endl;
+                std::cout << "Distance: " << result[i].distance << std::endl;
+                std::cout << std::endl;
+            }
         }
     }
 
@@ -60,7 +72,7 @@ void main_zed()
     zed.close();
 }
 
-void find_objects(cv::Mat source, cv::Mat view)
+std::vector<Obj_Info> find_objects(cv::Mat source, cv::Mat view)
 {
     // Resize image
     cv::resize(source, source, cv::Size(160, 90));
@@ -70,6 +82,9 @@ void find_objects(cv::Mat source, cv::Mat view)
     source.setTo(SAFE_DISTANCE*10, source != source);
     source.setTo(SAFE_DISTANCE*10, source == std::numeric_limits<float>::infinity());
     source.setTo(SAFE_DISTANCE*10, source == -std::numeric_limits<float>::infinity());
+
+    // Store result of objects
+    std::vector<Obj_Info> object_infos;
 
     cv::imshow("original", view);
 
@@ -125,6 +140,7 @@ void find_objects(cv::Mat source, cv::Mat view)
                         sprintf(text, "%.0f", distance);
                         cv::rectangle(result, boundary, boundary_color, 1);
                         cv::putText(result, text, cv::Point(boundary.x, boundary.y+30), cv::FONT_HERSHEY_SCRIPT_SIMPLEX, 0.5, boundary_color);
+                        object_infos.push_back((Obj_Info){distance, boundary});
                     }
                 }
             }
@@ -134,6 +150,8 @@ void find_objects(cv::Mat source, cv::Mat view)
 
     cv::imshow("result", result);
     if (cv::waitKey(70) == 0) exit(0);
+
+    return object_infos;
 }
 
 cv::Mat slMat2cvMat(Mat& input) {
